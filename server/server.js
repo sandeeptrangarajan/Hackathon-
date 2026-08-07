@@ -9,284 +9,439 @@ dotenv.config();
 
 const app = express();
 
-const secret =
-  process.env.AUTH_SECRET || "change-this-development-secret";
-
 const mongoUri = process.env.MONGODB_URI;
+const secret =
+  process.env.AUTH_SECRET || "development-secret-change-this";
 
 
-// Middleware
 app.use(
   cors({
     origin: "*",
+    credentials: true
   })
 );
 
 app.use(express.json({ limit: "5mb" }));
 
 
-// ================= DATABASE MODELS =================
+// =======================
+// DATABASE MODELS
+// =======================
 
-const userSchema = new mongoose.Schema({
-  email: {
-    type: String,
-    unique: true,
-    lowercase: true,
+const userSchema = new mongoose.Schema(
+{
+  email:{
+    type:String,
+    unique:true,
+    lowercase:true
   },
-  password: String,
-  role: {
-    type: String,
-    default: "student",
-  },
-  teamId: String,
-  teamName: String,
-  memberName: String,
-});
 
+  password:String,
 
-const teamSchema = new mongoose.Schema(
-  {
-    teamId: {
-      type: String,
-      unique: true,
-    },
-    teamName: String,
-    college: String,
-    members: Array,
-    status: {
-      type: String,
-      default: "Registered",
-    },
+  role:{
+    type:String,
+    default:"student"
   },
-  {
-    timestamps: true,
-  }
+
+  teamId:String,
+
+  teamName:String,
+
+  memberName:String
+
+},
+{
+ timestamps:true
+}
 );
 
 
-const announcementSchema = new mongoose.Schema({
-  text: String,
-  attachment: mongoose.Schema.Types.Mixed,
-  author: String,
-  date: {
-    type: Date,
-    default: Date.now,
-  },
-});
+
+const teamSchema = new mongoose.Schema(
+{
+
+teamId:{
+ type:String,
+ unique:true
+},
+
+teamName:String,
+
+college:String,
+
+members:Array,
+
+status:{
+ type:String,
+ default:"Registered"
+}
+
+},
+{
+ timestamps:true
+}
+
+);
+
+
+
+const announcementSchema =
+new mongoose.Schema(
+{
+
+text:String,
+
+attachment:
+mongoose.Schema.Types.Mixed,
+
+author:String,
+
+date:{
+type:Date,
+default:Date.now
+}
+
+}
+
+);
+
 
 
 const User =
-  mongoose.models.User ||
-  mongoose.model("User", userSchema);
+mongoose.models.User ||
+mongoose.model("User",userSchema);
 
 
 const Team =
-  mongoose.models.Team ||
-  mongoose.model("Team", teamSchema);
+mongoose.models.Team ||
+mongoose.model("Team",teamSchema);
 
 
 const Announcement =
-  mongoose.models.Announcement ||
-  mongoose.model(
-    "Announcement",
-    announcementSchema
-  );
+mongoose.models.Announcement ||
+mongoose.model(
+"Announcement",
+announcementSchema
+);
 
 
 
-// ================= HELPERS =================
+
+// =======================
+// DATABASE CONNECTION
+// =======================
 
 
-const publicUser = (u) => ({
-  id: u._id.toString(),
-  email: u.email,
-  role: u.role,
-  teamId: u.teamId,
-  teamName: u.teamName,
-  memberName: u.memberName,
+let isConnected=false;
+
+
+async function connectDB(){
+
+if(isConnected)
+return;
+
+
+if(!mongoUri){
+
+console.log(
+"MONGODB_URI missing"
+);
+
+return;
+
+}
+
+
+try{
+
+await mongoose.connect(mongoUri);
+
+
+isConnected=true;
+
+
+console.log(
+"MongoDB Connected"
+);
+
+
+// create admin users
+
+const admins=[
+"sandeeptrangarajan@gmail.com",
+"yogabalan2007yoga@gmail.com"
+];
+
+
+for(const email of admins){
+
+
+let user=
+await User.findOne({email});
+
+
+if(!user){
+
+
+await User.create({
+
+email,
+
+password:
+bcrypt.hashSync(
+"Admin@ksrce",
+10
+),
+
+role:"admin"
+
 });
 
 
-const makeToken = (u) => {
-
-  const payload = Buffer.from(
-    JSON.stringify({
-      sub: u._id.toString(),
-      exp: Date.now() + 604800000,
-    })
-  ).toString("base64url");
+}
 
 
-  const signature =
-    crypto
-      .createHmac("sha256", secret)
-      .update(payload)
-      .digest("base64url");
-
-
-  return `${payload}.${signature}`;
-};
+}
 
 
 
-const isBcryptHash = (value) =>
-  typeof value === "string" &&
-  /^\$2[aby]\$/i.test(value);
+}
+catch(error){
+
+console.log(
+"MongoDB Error:",
+error.message
+);
+
+}
+
+
+}
 
 
 
-const verifyPassword = async (
-  candidate,
-  stored
-) => {
-
-  if (!stored) return false;
 
 
-  if (isBcryptHash(stored)) {
-    return bcrypt.compare(
-      candidate,
-      stored
-    );
-  }
+// =======================
+// HELPERS
+// =======================
 
 
-  return candidate === stored;
-};
+function publicUser(user){
 
+return {
 
+id:user._id,
 
-// ================= AUTH =================
+email:user.email,
 
+role:user.role,
 
-const auth = async (
-  req,
-  res,
-  next
-) => {
+teamId:user.teamId,
 
-  try {
+teamName:user.teamName,
 
-    const token =
-      req.headers.authorization
-        ?.replace(/^Bearer\s+/i, "");
-
-
-    const [payload, signature] =
-      (token || "").split(".");
-
-
-    const expected =
-      crypto
-        .createHmac("sha256", secret)
-        .update(payload)
-        .digest("base64url");
-
-
-    if (
-      !payload ||
-      signature !== expected
-    ) {
-      throw new Error();
-    }
-
-
-    const data =
-      JSON.parse(
-        Buffer.from(
-          payload,
-          "base64url"
-        ).toString()
-      );
-
-
-    if (data.exp < Date.now()) {
-      throw new Error();
-    }
-
-
-    req.user =
-      await User.findById(data.sub);
-
-
-    if (!req.user) {
-      throw new Error();
-    }
-
-
-    next();
-
-
-  } catch {
-
-    res.status(401).json({
-      message:
-        "Invalid or expired authentication token",
-    });
-
-  }
+memberName:user.memberName
 
 };
 
-
-
-const admin = (
-  req,
-  res,
-  next
-) => {
-
-  if (
-    req.user &&
-    req.user.role === "admin"
-  ) {
-    next();
-  }
-  else {
-
-    res.status(403).json({
-      message:
-        "Administrator access required",
-    });
-
-  }
-
-};
+}
 
 
 
-// ================= ROUTES =================
+
+function createToken(user){
+
+
+const payload =
+Buffer.from(
+JSON.stringify({
+
+id:user._id,
+
+exp:
+Date.now()+7*24*60*60*1000
+
+})
+
+)
+.toString("base64url");
+
+
+
+const signature =
+crypto
+.createHmac(
+"sha256",
+secret
+)
+.update(payload)
+.digest("base64url");
+
+
+
+return `${payload}.${signature}`;
+
+
+}
+
+
+
+
+
+async function auth(req,res,next){
+
+
+try{
+
+
+const token =
+req.headers.authorization
+?.replace(
+"Bearer ",
+""
+);
+
+
+
+if(!token)
+throw Error();
+
+
+
+const [
+payload,
+signature
+]=token.split(".");
+
+
+const valid =
+crypto
+.createHmac(
+"sha256",
+secret
+)
+.update(payload)
+.digest("base64url");
+
+
+if(valid!==signature)
+throw Error();
+
+
+
+const data =
+JSON.parse(
+Buffer.from(
+payload,
+"base64url"
+)
+.toString()
+);
+
+
+
+req.user =
+await User.findById(data.id);
+
+
+
+if(!req.user)
+throw Error();
+
+
+
+next();
+
+
+
+}
+catch{
+
+res.status(401).json({
+
+message:
+"Unauthorized"
+
+});
+
+}
+
+
+}
+
+
+
+
+function admin(req,res,next){
+
+if(req.user?.role==="admin")
+return next();
+
+
+return res.status(403).json({
+
+message:
+"Admin access required"
+
+});
+
+}
+
+
+
+
+
+// =======================
+// ROUTES
+// =======================
 
 
 
 app.get(
-  "/api/health",
-  (req,res)=>{
+"/api/health",
+async(req,res)=>{
 
-    res.json({
 
-      status:
-        "Server is running",
+await connectDB();
 
-      mongodb:
-        mongoose.connection.readyState === 1
-          ? "Connected"
-          : "Disconnected",
 
-    });
+res.json({
 
-  }
+status:
+"Server is running",
+
+mongodb:
+mongoose.connection.readyState===1
+?
+"Connected"
+:
+"Disconnected"
+
+});
+
+
+}
+
 );
+
+
 
 
 
 // REGISTER
 
+
 app.post(
 "/api/auth/register",
 async(req,res)=>{
 
+
 try{
+
+
+await connectDB();
+
 
 
 const {
@@ -294,6 +449,7 @@ teamName,
 college,
 password,
 members
+
 }=req.body;
 
 
@@ -304,27 +460,28 @@ if(
 !password ||
 !Array.isArray(members) ||
 members.length!==3
-){
+)
 
 return res.status(400).json({
 
 message:
-"Complete registration details required"
+"Invalid registration data"
 
 });
 
-}
 
 
 
-const normalized =
+const formatted =
 members.map(
 (m,i)=>({
 
-...m,
+name:m.name,
 
 email:
-m.email.trim().toLowerCase(),
+m.email
+.toLowerCase()
+.trim(),
 
 isTeamHead:
 i===0
@@ -336,21 +493,24 @@ i===0
 
 const exists =
 await User.findOne({
+
 email:
-normalized[0].email
+formatted[0].email
+
 });
 
 
-if(exists){
+
+if(exists)
 
 return res.status(409).json({
 
 message:
-"Member already registered"
+"Email already registered"
 
 });
 
-}
+
 
 
 
@@ -358,25 +518,25 @@ const team =
 await Team.create({
 
 teamId:
-`TEAM-${Date.now()
-.toString(36)
-.toUpperCase()}`,
+"TEAM-"+Date.now(),
 
 teamName,
 
 college,
 
 members:
-normalized
+formatted
 
 });
+
 
 
 
 const users =
 await User.insertMany(
 
-normalized.map(m=>({
+formatted.map(
+m=>({
 
 email:m.email,
 
@@ -394,16 +554,18 @@ teamName,
 memberName:
 m.name
 
-}))
+})
+)
 
 );
 
 
 
-res.status(201).json({
+
+res.json({
 
 token:
-makeToken(users[0]),
+createToken(users[0]),
 
 user:
 publicUser(users[0])
@@ -412,66 +574,78 @@ publicUser(users[0])
 
 
 
-}catch(err){
+}
+catch(error){
+
+console.log(error);
+
 
 res.status(500).json({
 
 message:
-err.message
+error.message
 
 });
+
 
 }
 
-});
+
+
+}
+
+);
+
+
 
 
 
 // LOGIN
+
 
 app.post(
 "/api/auth/login",
 async(req,res)=>{
 
 
-try{
+await connectDB();
+
+
+const email =
+req.body.email
+?.toLowerCase()
+.trim();
+
 
 
 const user =
 await User.findOne({
-
-email:
-req.body.email
-.trim()
-.toLowerCase()
-
+email
 });
 
 
 
 if(
 !user ||
-!(await verifyPassword(
+!(await bcrypt.compare(
 req.body.password,
 user.password
 ))
-){
+)
 
 return res.status(401).json({
 
 message:
-"Invalid email or password"
+"Invalid credentials"
 
 });
-
-}
 
 
 
 res.json({
 
 token:
-makeToken(user),
+createToken(user),
 
 user:
 publicUser(user)
@@ -479,19 +653,11 @@ publicUser(user)
 });
 
 
-}catch(err){
-
-res.status(500).json({
-
-message:
-err.message
-
-});
 
 }
 
+);
 
-});
 
 
 
@@ -504,15 +670,24 @@ app.get(
 auth,
 async(req,res)=>{
 
+
+await connectDB();
+
+
 res.json(
-await Announcement
-.find()
+
+await Announcement.find()
 .sort({
 date:-1
 })
+
 );
 
-});
+
+}
+
+);
+
 
 
 
@@ -523,26 +698,63 @@ admin,
 async(req,res)=>{
 
 
+await connectDB();
+
+
 const data =
 await Announcement.create({
 
-...req.body,
+text:req.body.text,
 
-author:
-req.user.email
+attachment:
+req.body.attachment,
+
+author:req.user.email
+
+});
+
+
+res.json(data);
+
+
+}
+
+);
+
+
+
+
+
+app.delete(
+"/api/announcements/:id",
+auth,
+admin,
+async(req,res)=>{
+
+
+await Announcement.findByIdAndDelete(
+req.params.id
+);
+
+
+res.json({
+
+message:"Deleted"
 
 });
 
 
-res.status(201).json(data);
+}
+
+);
 
 
-});
 
 
 
 
 // TEAMS
+
 
 app.get(
 "/api/teams",
@@ -550,18 +762,27 @@ auth,
 admin,
 async(req,res)=>{
 
+
+await connectDB();
+
+
 res.json(
+
 await Team.find()
 .sort({
 createdAt:-1
 })
+
 );
 
-});
+
+}
+
+);
 
 
 
-// DELETE TEAM
+
 
 app.delete(
 "/api/teams/:teamId",
@@ -572,88 +793,42 @@ async(req,res)=>{
 
 await Team.findOneAndDelete({
 
-teamId:
-req.params.teamId
+teamId:req.params.teamId
 
 });
 
 
 await User.deleteMany({
 
-teamId:
-req.params.teamId
+teamId:req.params.teamId
 
 });
 
 
 res.json({
 
-message:
-"Deleted"
+message:"Deleted"
 
 });
 
-
-});
-
-
-
-
-// ================= MONGODB =================
-
-
-let connection;
-
-
-async function connectDB(){
-
-if(!mongoUri){
-
-console.warn(
-"MONGODB_URI missing"
-);
-
-return;
 
 }
 
-
-if(connection)
-return connection;
-
-
-
-connection =
-await mongoose.connect(
-mongoUri
-);
-
-
-console.log(
-"MongoDB connected"
 );
 
 
 
-return connection;
+
+
+// =======================
+// VERCEL EXPORT
+// =======================
+
+
+export default async function handler(req,res){
+
+await connectDB();
+
+return app(req,res);
 
 }
-
-
-
-connectDB()
-.catch(err=>{
-
-console.log(
-"MongoDB error",
-err.message
-);
-
-});
-
-
-
-
-// IMPORTANT FOR VERCEL
-
-export default app;

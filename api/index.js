@@ -1,3 +1,3 @@
-import app from "../server/server.js";
+import handler from "../server/server.js";
 
-export default app;
+export default handler;
