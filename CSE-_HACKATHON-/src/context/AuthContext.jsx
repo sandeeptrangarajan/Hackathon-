@@ -465,130 +465,36 @@ export function AuthProvider({
      DELETE ANNOUNCEMENT
   ======================================================= */
 
-  const deleteAnnouncement =
-    async (announcement) => {
-      /*
-       * Accept either:
-       *
-       * deleteAnnouncement(item)
-       *
-       * OR
-       *
-       * deleteAnnouncement(item._id)
-       *
-       * OR
-       *
-       * deleteAnnouncement(item.id)
-       */
+  const deleteAnnouncement = async (itemOrId) => {
+  const id =
+    typeof itemOrId === 'object'
+      ? itemOrId?._id || itemOrId?.id
+      : itemOrId;
 
-      const id =
-        typeof announcement ===
-        'object'
-          ? getAnnouncementId(
-              announcement
-            )
-          : announcement;
+  console.log('Deleting announcement:', itemOrId);
+  console.log('Announcement ID:', id);
 
-      /*
-       * IMPORTANT:
-       * Never send undefined to the API.
-       */
+  if (!id) {
+    throw new Error(
+      'Announcement ID is missing.'
+    );
+  }
 
-      if (
-        id === undefined ||
-        id === null ||
-        String(id).trim() === ''
-      ) {
-        console.error(
-          'Cannot delete announcement: missing ID.',
-          announcement
-        );
+  await request(
+    `/announcements/${encodeURIComponent(id)}`,
+    {
+      method: 'DELETE'
+    }
+  );
 
-        throw new Error(
-          'Announcement ID is missing. Please refresh the page and try again.'
-        );
-      }
-
-      const announcementId =
-        String(id);
-
-      console.log(
-        'Deleting announcement:',
-        announcementId
-      );
-
-      /*
-       * DELETE:
-       *
-       * /api/announcements/<MongoDB _id>
-       */
-
-      await request(
-        `/announcements/${encodeURIComponent(
-          announcementId
-        )}`,
-        {
-          method: 'DELETE'
-        }
-      );
-
-      /*
-       * Remove from frontend state.
-       */
-
-      setAnnouncements(
-        (items) =>
-          items.filter(
-            (item) => {
-              const itemId =
-                getAnnouncementId(
-                  item
-                );
-
-              return (
-                String(itemId) !==
-                announcementId
-              );
-            }
-          )
-      );
-    };
-
-  /* =======================================================
-     DELETE TEAM
-  ======================================================= */
-
-  const deleteTeam =
-    async (id) => {
-      if (
-        id === undefined ||
-        id === null ||
-        String(id).trim() === ''
-      ) {
-        throw new Error(
-          'Team ID is missing. Cannot delete team.'
-        );
-      }
-
-      await request(
-        `/teams/${encodeURIComponent(
-          String(id)
-        )}`,
-        {
-          method: 'DELETE'
-        }
-      );
-
-      setTeams(
-        (items) =>
-          items.filter(
-            (item) =>
-              String(
-                item.teamId
-              ) !== String(id)
-          )
-      );
-    };
+  setAnnouncements((items) =>
+    items.filter(
+      (item) =>
+        String(item._id || item.id) !==
+        String(id)
+    )
+  );
+};
 
   /* =======================================================
      CONTEXT VALUE
