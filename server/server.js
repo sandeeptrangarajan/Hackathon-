@@ -10,12 +10,14 @@ dotenv.config();
 const app = express();
 
 /* =========================================================
-   CONFIG
+   CONFIGURATION
 ========================================================= */
 
 const mongoUri = process.env.MONGODB_URI;
+
 const secret =
-  process.env.AUTH_SECRET || "change-this-development-secret";
+  process.env.AUTH_SECRET ||
+  "change-this-development-secret";
 
 const clientOrigin =
   process.env.CLIENT_ORIGIN || "*";
@@ -31,26 +33,30 @@ app.use(
   })
 );
 
-app.use(express.json({ limit: "5mb" }));
+app.use(
+  express.json({
+    limit: "5mb",
+  })
+);
 
 /* =========================================================
    MONGODB CONNECTION
-   Vercel Serverless compatible connection cache
+   Works with Vercel Serverless Functions
 ========================================================= */
 
 let mongoConnectionPromise = null;
 
 async function connectDB() {
   if (!mongoUri) {
-    throw new Error("MONGODB_URI environment variable is missing.");
+    throw new Error(
+      "MONGODB_URI environment variable is missing."
+    );
   }
 
-  // Already connected
   if (mongoose.connection.readyState === 1) {
     return mongoose.connection;
   }
 
-  // Connection currently in progress
   if (mongoConnectionPromise) {
     return mongoConnectionPromise;
   }
@@ -58,14 +64,20 @@ async function connectDB() {
   mongoConnectionPromise = mongoose
     .connect(mongoUri, {
       serverSelectionTimeoutMS: 10000,
+      maxPoolSize: 10,
     })
-    .then((connection) => {
+    .then(() => {
       console.log("MongoDB connected successfully");
-      return connection;
+      return mongoose.connection;
     })
     .catch((error) => {
       mongoConnectionPromise = null;
-      console.error("MongoDB connection failed:", error.message);
+
+      console.error(
+        "MongoDB connection failed:",
+        error.message
+      );
+
       throw error;
     });
 
@@ -96,9 +108,20 @@ const userSchema = new mongoose.Schema(
       default: "student",
     },
 
-    teamId: String,
-    teamName: String,
-    memberName: String,
+    teamId: {
+      type: String,
+      default: null,
+    },
+
+    teamName: {
+      type: String,
+      default: null,
+    },
+
+    memberName: {
+      type: String,
+      default: null,
+    },
   },
   {
     timestamps: true,
@@ -113,9 +136,15 @@ const teamSchema = new mongoose.Schema(
       required: true,
     },
 
-    teamName: String,
+    teamName: {
+      type: String,
+      required: true,
+    },
 
-    college: String,
+    college: {
+      type: String,
+      required: true,
+    },
 
     members: {
       type: Array,
@@ -134,11 +163,20 @@ const teamSchema = new mongoose.Schema(
 
 const announcementSchema = new mongoose.Schema(
   {
-    text: String,
+    text: {
+      type: String,
+      default: "",
+    },
 
-    attachment: mongoose.Schema.Types.Mixed,
+    attachment: {
+      type: mongoose.Schema.Types.Mixed,
+      default: null,
+    },
 
-    author: String,
+    author: {
+      type: String,
+      default: "",
+    },
 
     date: {
       type: Date,
@@ -152,7 +190,7 @@ const announcementSchema = new mongoose.Schema(
 
 /* =========================================================
    MODELS
-   Prevent OverwriteModelError in Vercel
+   Prevent OverwriteModelError on Vercel
 ========================================================= */
 
 const User =
@@ -165,25 +203,37 @@ const Team =
 
 const Announcement =
   mongoose.models.Announcement ||
-  mongoose.model("Announcement", announcementSchema);
+  mongoose.model(
+    "Announcement",
+    announcementSchema
+  );
 
 /* =========================================================
    HELPERS
 ========================================================= */
 
-const publicUser = (user) => ({
-  id: user._id.toString(),
-  email: user.email,
-  role: user.role,
-  teamId: user.teamId,
-  teamName: user.teamName,
-  memberName: user.memberName,
-});
+function publicUser(user) {
+  return {
+    id: user._id.toString(),
+    email: user.email,
+    role: user.role,
+    teamId: user.teamId,
+    teamName: user.teamName,
+    memberName: user.memberName,
+  };
+}
+
+/* =========================================================
+   TOKEN GENERATION
+========================================================= */
 
 function makeToken(user) {
   const payload = {
     sub: user._id.toString(),
-    exp: Date.now() + 7 * 24 * 60 * 60 * 1000,
+
+    exp:
+      Date.now() +
+      7 * 24 * 60 * 60 * 1000,
   };
 
   const encoded = Buffer.from(
@@ -198,6 +248,10 @@ function makeToken(user) {
   return `${encoded}.${signature}`;
 }
 
+/* =========================================================
+   PASSWORD HELPERS
+========================================================= */
+
 function isBcryptHash(value) {
   return (
     typeof value === "string" &&
@@ -205,131 +259,328 @@ function isBcryptHash(value) {
   );
 }
 
-async function verifyPassword(candidate, stored) {
+async function verifyPassword(
+  candidate,
+  stored
+) {
   if (!stored) {
     return false;
   }
 
   if (isBcryptHash(stored)) {
-    return bcrypt.compare(candidate, stored);
+    return bcrypt.compare(
+      candidate,
+      stored
+    );
   }
 
-  // Supports old plain-text passwords already present in DB
+  /*
+    Supports old plain-text passwords
+    that may already exist in MongoDB.
+  */
+
   return candidate === stored;
 }
 
 /* =========================================================
-   AUTH MIDDLEWARE
+   ADMIN INITIALIZATION
 ========================================================= */
 
-const auth = async (req, res, next) => {
+let adminInitializationPromise = null;
+
+async function initializeAdmins() {
+  if (adminInitializationPromise) {
+    return adminInitializationPromise;
+  }
+
+  adminInitializationPromise =
+    (async () => {
+      await connectDB();
+
+      const adminEmails = [
+        "sandeeptrangarajan@gmail.com",
+        "yogabalan2007yoga@gmail.com",
+      ];
+
+      const adminPassword =
+        "Admin@ksrce";
+
+      for (const email of adminEmails) {
+        let user =
+          await User.findOne({
+            email,
+          });
+
+        /*
+          Create admin if it doesn't exist.
+        */
+
+        if (!user) {
+          user = await User.create({
+            email,
+            password:
+              await bcrypt.hash(
+                adminPassword,
+                10
+              ),
+            role: "admin",
+          });
+
+          console.log(
+            `Created admin account: ${email}`
+          );
+
+          continue;
+        }
+
+        let changed = false;
+
+        /*
+          Make sure the account is admin.
+        */
+
+        if (user.role !== "admin") {
+          user.role = "admin";
+          changed = true;
+        }
+
+        /*
+          Convert old plain-text password
+          to bcrypt.
+        */
+
+        if (
+          !isBcryptHash(
+            user.password
+          )
+        ) {
+          user.password =
+            await bcrypt.hash(
+              adminPassword,
+              10
+            );
+
+          changed = true;
+        }
+
+        if (changed) {
+          await user.save();
+
+          console.log(
+            `Updated admin account: ${email}`
+          );
+        }
+      }
+    })().catch((error) => {
+      adminInitializationPromise =
+        null;
+
+      console.error(
+        "Admin initialization failed:",
+        error.message
+      );
+
+      throw error;
+    });
+
+  return adminInitializationPromise;
+}
+
+/* =========================================================
+   AUTHENTICATION MIDDLEWARE
+========================================================= */
+
+async function auth(
+  req,
+  res,
+  next
+) {
   try {
     await connectDB();
 
     const authorization =
-      req.headers.authorization || "";
+      req.headers.authorization ||
+      "";
 
-    const token = authorization.replace(
-      /^Bearer\s+/i,
-      ""
-    );
+    const token =
+      authorization.replace(
+        /^Bearer\s+/i,
+        ""
+      );
 
-    const parts = token.split(".");
+    if (!token) {
+      throw new Error(
+        "Missing authentication token"
+      );
+    }
+
+    const parts =
+      token.split(".");
 
     if (parts.length !== 2) {
-      throw new Error("Invalid token");
+      throw new Error(
+        "Invalid token format"
+      );
     }
 
-    const [payload, signature] = parts;
+    const [
+      payload,
+      signature,
+    ] = parts;
 
-    const expectedSignature = crypto
-      .createHmac("sha256", secret)
-      .update(payload)
-      .digest("base64url");
+    const expectedSignature =
+      crypto
+        .createHmac(
+          "sha256",
+          secret
+        )
+        .update(payload)
+        .digest("base64url");
 
-    if (signature !== expectedSignature) {
-      throw new Error("Invalid signature");
+    if (
+      !crypto.timingSafeEqual(
+        Buffer.from(signature),
+        Buffer.from(
+          expectedSignature
+        )
+      )
+    ) {
+      throw new Error(
+        "Invalid token signature"
+      );
     }
 
-    const data = JSON.parse(
-      Buffer.from(payload, "base64url").toString()
-    );
+    const data =
+      JSON.parse(
+        Buffer.from(
+          payload,
+          "base64url"
+        ).toString()
+      );
 
-    if (!data.exp || data.exp < Date.now()) {
-      throw new Error("Token expired");
+    if (
+      !data.exp ||
+      data.exp < Date.now()
+    ) {
+      throw new Error(
+        "Token expired"
+      );
     }
 
-    const user = await User.findById(data.sub);
+    if (!data.sub) {
+      throw new Error(
+        "Invalid token subject"
+      );
+    }
+
+    const user =
+      await User.findById(
+        data.sub
+      );
 
     if (!user) {
-      throw new Error("User not found");
+      throw new Error(
+        "User not found"
+      );
     }
 
     req.user = user;
 
-    next();
+    return next();
   } catch (error) {
-    console.error("Authentication error:", error.message);
+    console.error(
+      "Authentication error:",
+      error.message
+    );
 
     return res.status(401).json({
-      message: "Invalid or expired authentication token.",
+      message:
+        "Invalid or expired authentication token.",
     });
   }
-};
+}
 
 /* =========================================================
    ADMIN MIDDLEWARE
 ========================================================= */
 
-const admin = (req, res, next) => {
-  if (req.user?.role === "admin") {
+function admin(
+  req,
+  res,
+  next
+) {
+  if (
+    req.user &&
+    req.user.role === "admin"
+  ) {
     return next();
   }
 
   return res.status(403).json({
-    message: "Administrator access required.",
+    message:
+      "Administrator access required.",
   });
-};
+}
 
 /* =========================================================
    HEALTH CHECK
 ========================================================= */
 
-app.get("/api/health", async (req, res) => {
-  try {
-    await connectDB();
+app.get(
+  "/api/health",
+  async (req, res) => {
+    try {
+      await connectDB();
 
-    return res.status(200).json({
-      status: "Server is running",
-      mongodb:
-        mongoose.connection.readyState === 1
-          ? "Connected"
-          : "Disconnected",
-    });
-  } catch (error) {
-    console.error("Health check MongoDB error:", error.message);
+      return res.status(200).json({
+        status:
+          "Server is running",
 
-    return res.status(503).json({
-      status: "Server is running",
-      mongodb: "Disconnected",
-      error: "MongoDB connection failed",
-    });
+        mongodb:
+          mongoose.connection
+            .readyState === 1
+            ? "Connected"
+            : "Disconnected",
+      });
+    } catch (error) {
+      console.error(
+        "Health check error:",
+        error.message
+      );
+
+      return res.status(503).json({
+        status:
+          "Server is running",
+
+        mongodb:
+          "Disconnected",
+
+        error:
+          "MongoDB connection failed",
+      });
+    }
   }
-});
+);
 
 /* =========================================================
-   ROOT
+   API ROOT
 ========================================================= */
 
-app.get("/api", (req, res) => {
-  res.json({
-    message: "CSE Hackathon API",
-    status: "running",
-  });
-});
+app.get(
+  "/api",
+  (req, res) => {
+    return res.json({
+      message:
+        "CSE Hackathon API",
+
+      status:
+        "running",
+    });
+  }
+);
 
 /* =========================================================
-   REGISTER TEAM
+   REGISTER
 ========================================================= */
 
 app.post(
@@ -349,7 +600,9 @@ app.post(
         !teamName ||
         !college ||
         !password ||
-        !Array.isArray(members) ||
+        !Array.isArray(
+          members
+        ) ||
         members.length !== 3
       ) {
         return res.status(400).json({
@@ -358,24 +611,48 @@ app.post(
         });
       }
 
-      const normalizedMembers = members.map(
-        (member, index) => ({
-          ...member,
-          name: member.name?.trim(),
-          email: member.email
-            ?.trim()
-            .toLowerCase(),
-          isTeamHead: index === 0,
-        })
-      );
+      const normalizedMembers =
+        members.map(
+          (
+            member,
+            index
+          ) => ({
+            ...member,
 
-      const emails = normalizedMembers.map(
-        (member) => member.email
-      );
+            name:
+              member.name
+                ?.trim(),
+
+            email:
+              member.email
+                ?.trim()
+                .toLowerCase(),
+
+            isTeamHead:
+              index === 0,
+          })
+        );
+
+      const emails =
+        normalizedMembers.map(
+          (member) =>
+            member.email
+        );
 
       if (
-        emails.some((email) => !email) ||
-        new Set(emails).size !== 3
+        emails.some(
+          (email) => !email
+        )
+      ) {
+        return res.status(400).json({
+          message:
+            "All member emails are required.",
+        });
+      }
+
+      if (
+        new Set(emails)
+          .size !== 3
       ) {
         return res.status(400).json({
           message:
@@ -383,11 +660,12 @@ app.post(
         });
       }
 
-      const existingUser = await User.findOne({
-        email: {
-          $in: emails,
-        },
-      });
+      const existingUser =
+        await User.findOne({
+          email: {
+            $in: emails,
+          },
+        });
 
       if (existingUser) {
         return res.status(409).json({
@@ -396,46 +674,76 @@ app.post(
         });
       }
 
-      const teamId = `TEAM-${Date.now()
-        .toString(36)
-        .toUpperCase()}`;
+      const teamId =
+        `TEAM-${Date.now()
+          .toString(36)
+          .toUpperCase()}`;
 
-      const team = await Team.create({
-        teamId,
-        teamName,
-        college,
-        members: normalizedMembers,
-        status: "Registered",
-      });
-
-      const hashedPassword = await bcrypt.hash(
-        password,
-        10
-      );
-
-      const users = await User.insertMany(
-        normalizedMembers.map((member) => ({
-          email: member.email,
-          password: hashedPassword,
-          role: "student",
-          teamId: team.teamId,
+      const team =
+        await Team.create({
+          teamId,
           teamName,
-          memberName: member.name,
-        }))
-      );
+          college,
+          members:
+            normalizedMembers,
+          status:
+            "Registered",
+        });
+
+      const hashedPassword =
+        await bcrypt.hash(
+          password,
+          10
+        );
+
+      const users =
+        await User.insertMany(
+          normalizedMembers.map(
+            (member) => ({
+              email:
+                member.email,
+
+              password:
+                hashedPassword,
+
+              role:
+                "student",
+
+              teamId:
+                team.teamId,
+
+              teamName,
+
+              memberName:
+                member.name,
+            })
+          )
+        );
 
       const teamHead =
         users.find(
           (user) =>
-            user.email === normalizedMembers[0].email
-        ) || users[0];
+            user.email ===
+            normalizedMembers[0]
+              .email
+        ) ||
+        users[0];
 
-      return res.status(201).json({
-        token: makeToken(teamHead),
-        user: publicUser(teamHead),
-      });
+      return res
+        .status(201)
+        .json({
+          token:
+            makeToken(
+              teamHead
+            ),
+
+          user:
+            publicUser(
+              teamHead
+            ),
+        });
     } catch (error) {
-      next(error);
+      return next(error);
     }
   }
 );
@@ -450,46 +758,86 @@ app.post(
     try {
       await connectDB();
 
-      const email = req.body.email
-        ?.trim()
-        .toLowerCase();
+      const email =
+        req.body.email
+          ?.trim()
+          .toLowerCase();
 
-      const password = req.body.password || "";
+      const password =
+        req.body.password ||
+        "";
 
-      if (!email || !password) {
+      if (
+        !email ||
+        !password
+      ) {
         return res.status(400).json({
-          message: "Email and password are required.",
+          message:
+            "Email and password are required.",
         });
       }
 
-      const user = await User.findOne({
-        email,
-      });
+      const user =
+        await User.findOne({
+          email,
+        });
 
-      if (
-        !user ||
-        !(await verifyPassword(
+      if (!user) {
+        return res.status(401).json({
+          message:
+            "Invalid email or password.",
+        });
+      }
+
+      const valid =
+        await verifyPassword(
           password,
           user.password
-        ))
-      ) {
+        );
+
+      if (!valid) {
         return res.status(401).json({
-          message: "Invalid email or password.",
+          message:
+            "Invalid email or password.",
         });
+      }
+
+      /*
+        If this is one of the default
+        admin accounts, make sure its
+        role is admin.
+      */
+
+      const defaultAdmins = [
+        "sandeeptrangarajan@gmail.com",
+        "yogabalan2007yoga@gmail.com",
+      ];
+
+      if (
+        defaultAdmins.includes(
+          user.email
+        ) &&
+        user.role !== "admin"
+      ) {
+        user.role = "admin";
+        await user.save();
       }
 
       return res.json({
-        token: makeToken(user),
-        user: publicUser(user),
+        token:
+          makeToken(user),
+
+        user:
+          publicUser(user),
       });
     } catch (error) {
-      next(error);
+      return next(error);
     }
   }
 );
 
 /* =========================================================
-   ANNOUNCEMENTS
+   GET ANNOUNCEMENTS
 ========================================================= */
 
 app.get(
@@ -499,11 +847,15 @@ app.get(
     try {
       const announcements =
         await Announcement.find()
-          .sort({ date: -1 });
+          .sort({
+            date: -1,
+          });
 
-      return res.json(announcements);
+      return res.json(
+        announcements
+      );
     } catch (error) {
-      next(error);
+      return next(error);
     }
   }
 );
@@ -519,18 +871,29 @@ app.post(
   async (req, res, next) => {
     try {
       const announcement =
-        await Announcement.create({
-          text: req.body.text,
-          attachment:
-            req.body.attachment || null,
-          author: req.user.email,
-        });
+        await Announcement.create(
+          {
+            text:
+              req.body.text ||
+              "",
 
-      return res.status(201).json(
-        announcement
-      );
+            attachment:
+              req.body
+                .attachment ||
+              null,
+
+            author:
+              req.user.email,
+          }
+        );
+
+      return res
+        .status(201)
+        .json(
+          announcement
+        );
     } catch (error) {
-      next(error);
+      return next(error);
     }
   }
 );
@@ -548,11 +911,16 @@ app.put(
       const announcement =
         await Announcement.findByIdAndUpdate(
           req.params.id,
+
           {
-            text: req.body.text,
+            text:
+              req.body.text,
+
             attachment:
-              req.body.attachment,
+              req.body
+                .attachment,
           },
+
           {
             new: true,
           }
@@ -560,13 +928,16 @@ app.put(
 
       if (!announcement) {
         return res.status(404).json({
-          message: "Announcement not found.",
+          message:
+            "Announcement not found.",
         });
       }
 
-      return res.json(announcement);
+      return res.json(
+        announcement
+      );
     } catch (error) {
-      next(error);
+      return next(error);
     }
   }
 );
@@ -588,15 +959,17 @@ app.delete(
 
       if (!deleted) {
         return res.status(404).json({
-          message: "Announcement not found.",
+          message:
+            "Announcement not found.",
         });
       }
 
       return res.json({
-        message: "Deleted",
+        message:
+          "Deleted",
       });
     } catch (error) {
-      next(error);
+      return next(error);
     }
   }
 );
@@ -611,12 +984,17 @@ app.get(
   admin,
   async (req, res, next) => {
     try {
-      const teams = await Team.find()
-        .sort({ createdAt: -1 });
+      const teams =
+        await Team.find()
+          .sort({
+            createdAt: -1,
+          });
 
-      return res.json(teams);
+      return res.json(
+        teams
+      );
     } catch (error) {
-      next(error);
+      return next(error);
     }
   }
 );
@@ -631,7 +1009,8 @@ app.delete(
   admin,
   async (req, res, next) => {
     try {
-      const teamId = req.params.teamId;
+      const teamId =
+        req.params.teamId;
 
       await Team.findOneAndDelete({
         teamId,
@@ -642,109 +1021,135 @@ app.delete(
       });
 
       return res.json({
-        message: "Deleted",
+        message:
+          "Deleted",
       });
     } catch (error) {
-      next(error);
+      return next(error);
     }
   }
 );
 
 /* =========================================================
-   ERROR HANDLER
+   404 API HANDLER
 ========================================================= */
 
-app.use((error, req, res, next) => {
-  console.error(
-    "API Error:",
-    error
-  );
-
-  if (res.headersSent) {
-    return next(error);
+app.use(
+  "/api",
+  (req, res) => {
+    return res.status(404).json({
+      message:
+        "API endpoint not found.",
+    });
   }
-
-  return res.status(500).json({
-    message:
-      process.env.NODE_ENV === "production"
-        ? "Internal server error."
-        : error.message,
-  });
-});
+);
 
 /* =========================================================
-   LOCAL DEVELOPMENT ONLY
-   IMPORTANT:
-   Vercel uses the exported app and does NOT execute listen().
+   GLOBAL ERROR HANDLER
+========================================================= */
+
+app.use(
+  (
+    error,
+    req,
+    res,
+    next
+  ) => {
+    console.error(
+      "API Error:",
+      error
+    );
+
+    if (
+      res.headersSent
+    ) {
+      return next(
+        error
+      );
+    }
+
+    return res.status(500).json({
+      message:
+        process.env.NODE_ENV ===
+        "production"
+          ? "Internal server error."
+          : error.message,
+    });
+  }
+);
+
+/* =========================================================
+   LOCAL DEVELOPMENT
 ========================================================= */
 
 if (!process.env.VERCEL) {
-  const port = process.env.PORT || 5000;
+  const port =
+    process.env.PORT ||
+    5000;
 
-  connectDB()
-    .then(async () => {
-      console.log(
-        "MongoDB connected for local development"
-      );
-
-      // Create default admin accounts
-      const adminEmails = [
-        "sandeeptrangarajan@gmail.com",
-        "yogabalan2007yoga@gmail.com",
-      ];
-
-      for (const email of adminEmails) {
-        const existing =
-          await User.findOne({ email });
-
-        if (!existing) {
-          await User.create({
-            email,
-            password:
-              await bcrypt.hash(
-                "Admin@ksrce",
-                10
-              ),
-            role: "admin",
-          });
-
+  initializeAdmins()
+    .then(() => {
+      app.listen(
+        port,
+        () => {
           console.log(
-            `Created admin: ${email}`
+            "MongoDB connected for local development"
           );
-        } else if (
-          existing.password &&
-          !isBcryptHash(existing.password)
-        ) {
-          existing.password =
-            await bcrypt.hash(
-              "Admin@ksrce",
-              10
-            );
-
-          await existing.save();
 
           console.log(
-            `Updated password for: ${email}`
+            `Local server running at http://localhost:${port}`
           );
         }
-      }
-
-      app.listen(port, () => {
-        console.log(
-          `Local server running at http://localhost:${port}`
-        );
-      });
-    })
-    .catch((error) => {
-      console.error(
-        "Local MongoDB connection failed:",
-        error.message
       );
-    });
+    })
+    .catch(
+      (error) => {
+        console.error(
+          "Local startup failed:",
+          error.message
+        );
+      }
+    );
 }
 
 /* =========================================================
-   VERCEL EXPORT
+   VERCEL HANDLER
 ========================================================= */
 
-export default app;
+async function handler(
+  req,
+  res
+) {
+  try {
+    /*
+      Connect MongoDB and initialize
+      admin accounts before processing
+      the request.
+    */
+
+    await initializeAdmins();
+
+    return app(
+      req,
+      res
+    );
+  } catch (error) {
+    console.error(
+      "Vercel backend initialization error:",
+      error
+    );
+
+    return res.status(500).json({
+      message:
+        "Backend initialization failed.",
+
+      error:
+        process.env.NODE_ENV ===
+        "production"
+          ? "Database initialization failed."
+          : error.message,
+    });
+  }
+}
+
+export default handler;
