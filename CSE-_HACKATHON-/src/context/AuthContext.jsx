@@ -1,4 +1,3 @@
-
 import {
   createContext,
   useContext,
@@ -9,61 +8,39 @@ import {
 
 const AuthContext = createContext(null);
 
-/*
- * API configuration
- *
- * Local:
- *   VITE_API_URL=http://localhost:5000/api
- *
- * Vercel:
- *   VITE_API_URL=/api
- */
-
 const API = (
   import.meta.env.VITE_API_URL || '/api'
 ).replace(/\/$/, '');
 
 const TOKEN = 'hackathon_auth_token';
-
-const CURRENT_USER =
-  'hackathon_current_user';
+const CURRENT_USER = 'hackathon_current_user';
 
 /* =========================================================
    API REQUEST HELPER
 ========================================================= */
 
-const request = async (
-  path,
-  options = {}
-) => {
-  const token =
-    localStorage.getItem(TOKEN);
+const request = async (path, options = {}) => {
+  const token = localStorage.getItem(TOKEN);
 
-  const response = await fetch(
-    `${API}${path}`,
-    {
-      ...options,
+  const response = await fetch(`${API}${path}`, {
+    ...options,
 
-      headers: {
-        'Content-Type':
-          'application/json',
+    headers: {
+      'Content-Type': 'application/json',
 
-        ...(token
-          ? {
-              Authorization:
-                `Bearer ${token}`
-            }
-          : {}),
+      ...(token
+        ? {
+            Authorization: `Bearer ${token}`
+          }
+        : {}),
 
-        ...(options.headers || {})
-      }
+      ...(options.headers || {})
     }
-  );
+  });
 
-  const data =
-    await response
-      .json()
-      .catch(() => ({}));
+  const data = await response
+    .json()
+    .catch(() => ({}));
 
   if (!response.ok) {
     throw new Error(
@@ -79,135 +56,128 @@ const request = async (
    ANNOUNCEMENT ID HELPER
 ========================================================= */
 
-/*
- * MongoDB returns _id.
- *
- * Some frontend code may expect id.
- * This helper guarantees that both are handled.
- */
-
-const getAnnouncementId = (
-  announcement
-) => {
-  if (!announcement) {
+const getAnnouncementId = (item) => {
+  if (!item) {
     return null;
   }
 
-  return (
-    announcement._id ||
-    announcement.id ||
-    null
-  );
-};
-
-/*
- * Normalize announcement objects so
- * the frontend always has an `id`.
- */
-
-const normalizeAnnouncement = (
-  announcement
-) => {
-  if (!announcement) {
-    return announcement;
+  // MongoDB normally returns _id
+  if (item._id) {
+    return String(item._id);
   }
 
-  const id =
-    getAnnouncementId(
-      announcement
-    );
+  // Frontend may already have id
+  if (item.id) {
+    return String(item.id);
+  }
+
+  return null;
+};
+
+/* =========================================================
+   NORMALIZE ANNOUNCEMENT
+========================================================= */
+
+const normalizeAnnouncement = (item) => {
+  if (!item) {
+    return null;
+  }
+
+  const id = getAnnouncementId(item);
 
   return {
-    ...announcement,
-    id: id ? String(id) : null
+    ...item,
+
+    // Always keep both forms available
+    _id: id,
+    id: id
   };
+};
+
+/* =========================================================
+   TEAM ID HELPER
+========================================================= */
+
+const getTeamId = (team) => {
+  if (!team) {
+    return null;
+  }
+
+  if (typeof team === 'string') {
+    return team;
+  }
+
+  return (
+    team.teamId ||
+    team._id ||
+    team.id ||
+    null
+  );
 };
 
 /* =========================================================
    AUTH PROVIDER
 ========================================================= */
 
-export function AuthProvider({
-  children
-}) {
-  const [user, setUser] =
-    useState(() => {
-      try {
-        const savedUser =
-          localStorage.getItem(
-            CURRENT_USER
-          );
+export function AuthProvider({ children }) {
+  const [user, setUser] = useState(() => {
+    try {
+      const savedUser =
+        localStorage.getItem(CURRENT_USER);
 
-        return savedUser
-          ? JSON.parse(savedUser)
-          : null;
-      } catch (error) {
-        console.error(
-          'Failed to load saved user:',
-          error
-        );
+      return savedUser
+        ? JSON.parse(savedUser)
+        : null;
+    } catch (error) {
+      console.error(
+        'Failed to load saved user:',
+        error
+      );
 
-        return null;
-      }
-    });
+      return null;
+    }
+  });
 
-  const [teams, setTeams] =
+  const [teams, setTeams] = useState([]);
+
+  const [announcements, setAnnouncements] =
     useState([]);
 
-  const [
-    announcements,
-    setAnnouncements
-  ] = useState([]);
+/* =========================================================
+   REFRESH DATA
+========================================================= */
 
-  /* =======================================================
-     REFRESH DATA
-  ======================================================= */
-
-  const refresh = async (
-    activeUser = user
-  ) => {
+  const refresh = async (activeUser = user) => {
     if (!activeUser) {
       return;
     }
 
     try {
-      /*
-       * Get announcements
-       */
+      /* -------------------------------
+         LOAD ANNOUNCEMENTS
+      -------------------------------- */
 
       const announcementData =
-        await request(
-          '/announcements'
-        );
-
-      /*
-       * Normalize MongoDB _id -> id
-       */
+        await request('/announcements');
 
       const normalizedAnnouncements =
-        Array.isArray(
-          announcementData
-        )
-          ? announcementData.map(
-              normalizeAnnouncement
-            )
+        Array.isArray(announcementData)
+          ? announcementData
+              .map(normalizeAnnouncement)
+              .filter(Boolean)
           : [];
 
       setAnnouncements(
         normalizedAnnouncements
       );
 
-      /*
-       * Get teams only for admin
-       */
+      /* -------------------------------
+         LOAD TEAMS FOR ADMIN
+      -------------------------------- */
 
-      if (
-        activeUser.role === 'admin'
-      ) {
+      if (activeUser.role === 'admin') {
         const teamData =
-          await request(
-            '/teams'
-          );
+          await request('/teams');
 
         setTeams(
           Array.isArray(teamData)
@@ -227,28 +197,26 @@ export function AuthProvider({
     }
   };
 
-  /* =======================================================
-     LOAD USER DATA
-  ======================================================= */
+/* =========================================================
+   LOAD USER DATA
+========================================================= */
 
   useEffect(() => {
     if (!user) {
       return;
     }
 
-    refresh(user).catch(
-      (error) => {
-        console.error(
-          'Initial refresh failed:',
-          error.message
-        );
-      }
-    );
+    refresh(user).catch((error) => {
+      console.error(
+        'Initial refresh failed:',
+        error.message
+      );
+    });
   }, [user]);
 
-  /* =======================================================
-     SAVE CURRENT USER
-  ======================================================= */
+/* =========================================================
+   SAVE CURRENT USER
+========================================================= */
 
   useEffect(() => {
     if (user) {
@@ -263,24 +231,18 @@ export function AuthProvider({
     }
   }, [user]);
 
-  /* =======================================================
-     LOGIN
-  ======================================================= */
+/* =========================================================
+   LOGIN
+========================================================= */
 
-  const login = async (
-    credentials
-  ) => {
-    const response =
-      await request(
-        '/auth/login',
-        {
-          method: 'POST',
-
-          body: JSON.stringify(
-            credentials
-          )
-        }
-      );
+  const login = async (credentials) => {
+    const response = await request(
+      '/auth/login',
+      {
+        method: 'POST',
+        body: JSON.stringify(credentials)
+      }
+    );
 
     if (!response.token) {
       throw new Error(
@@ -295,31 +257,23 @@ export function AuthProvider({
 
     setUser(response.user);
 
-    await refresh(
-      response.user
-    );
+    await refresh(response.user);
 
     return response.user;
   };
 
-  /* =======================================================
-     REGISTER
-  ======================================================= */
+/* =========================================================
+   REGISTER
+========================================================= */
 
-  const register = async (
-    payload
-  ) => {
-    const response =
-      await request(
-        '/auth/register',
-        {
-          method: 'POST',
-
-          body: JSON.stringify(
-            payload
-          )
-        }
-      );
+  const register = async (payload) => {
+    const response = await request(
+      '/auth/register',
+      {
+        method: 'POST',
+        body: JSON.stringify(payload)
+      }
+    );
 
     if (!response.token) {
       throw new Error(
@@ -334,214 +288,301 @@ export function AuthProvider({
 
     setUser(response.user);
 
-    await refresh(
-      response.user
-    );
+    await refresh(response.user);
 
     return response.user;
   };
 
-  /* =======================================================
-     LOGOUT
-  ======================================================= */
+/* =========================================================
+   LOGOUT
+========================================================= */
 
   const logout = () => {
-    localStorage.removeItem(
-      TOKEN
-    );
-
-    localStorage.removeItem(
-      CURRENT_USER
-    );
+    localStorage.removeItem(TOKEN);
+    localStorage.removeItem(CURRENT_USER);
 
     setUser(null);
     setTeams([]);
     setAnnouncements([]);
   };
 
-  /* =======================================================
-     CREATE ANNOUNCEMENT
-  ======================================================= */
+/* =========================================================
+   CREATE ANNOUNCEMENT
+========================================================= */
 
-  const postAnnouncement =
-    async (payload) => {
-      const item =
-        await request(
-          '/announcements',
-          {
-            method: 'POST',
-
-            body: JSON.stringify(
-              payload
-            )
-          }
-        );
-
-      const normalizedItem =
-        normalizeAnnouncement(
-          item
-        );
-
-      setAnnouncements(
-        (items) => [
-          normalizedItem,
-          ...items
-        ]
-      );
-
-      return normalizedItem;
-    };
-
-  /* =======================================================
-     UPDATE ANNOUNCEMENT
-  ======================================================= */
-
-  const updateAnnouncement =
-    async (
-      id,
-      changes
-    ) => {
-      /*
-       * Prevent:
-       *
-       * PUT /api/announcements/undefined
-       */
-
-      if (!id) {
-        throw new Error(
-          'Announcement ID is missing. Cannot update announcement.'
-        );
+  const postAnnouncement = async (payload) => {
+    const item = await request(
+      '/announcements',
+      {
+        method: 'POST',
+        body: JSON.stringify(payload)
       }
+    );
 
-      const item =
-        await request(
-          `/announcements/${encodeURIComponent(
-            String(id)
-          )}`,
-          {
-            method: 'PUT',
+    const normalizedItem =
+      normalizeAnnouncement(item);
 
-            body: JSON.stringify(
-              changes
-            )
-          }
-        );
+    if (!normalizedItem) {
+      throw new Error(
+        'Server returned an invalid announcement.'
+      );
+    }
 
-      const normalizedItem =
-        normalizeAnnouncement(
-          item
-        );
+    setAnnouncements((items) => [
+      normalizedItem,
+      ...items
+    ]);
 
-      /*
-       * Update local state immediately.
-       */
+    return normalizedItem;
+  };
 
-      setAnnouncements(
-        (items) =>
-          items.map(
-            (announcement) => {
-              const announcementId =
-                getAnnouncementId(
-                  announcement
-                );
+/* =========================================================
+   UPDATE ANNOUNCEMENT
+========================================================= */
 
-              if (
-                String(
-                  announcementId
-                ) === String(id)
-              ) {
-                return normalizedItem;
-              }
+  const updateAnnouncement = async (
+    itemOrId,
+    changes
+  ) => {
+    const id =
+      typeof itemOrId === 'object'
+        ? getAnnouncementId(itemOrId)
+        : itemOrId
+          ? String(itemOrId)
+          : null;
 
-              return announcement;
-            }
-          )
+    console.log(
+      'Updating announcement:',
+      itemOrId
+    );
+
+    console.log(
+      'Announcement ID:',
+      id
+    );
+
+    if (!id) {
+      throw new Error(
+        'Announcement ID is missing. Cannot update announcement.'
+      );
+    }
+
+    const updatedItem =
+      await request(
+        `/announcements/${encodeURIComponent(
+          id
+        )}`,
+        {
+          method: 'PUT',
+          body: JSON.stringify(changes)
+        }
       );
 
-      return normalizedItem;
-    };
+    const normalizedItem =
+      normalizeAnnouncement(updatedItem);
 
-  /* =======================================================
-     DELETE ANNOUNCEMENT
-  ======================================================= */
+    setAnnouncements((items) =>
+      items.map((item) => {
+        const currentId =
+          getAnnouncementId(item);
 
-  const deleteAnnouncement = async (itemOrId) => {
-  const id =
-    typeof itemOrId === 'object'
-      ? itemOrId?._id || itemOrId?.id
-      : itemOrId;
+        if (
+          currentId &&
+          String(currentId) === String(id)
+        ) {
+          return normalizedItem;
+        }
 
-  console.log('Deleting announcement:', itemOrId);
-  console.log('Announcement ID:', id);
-
-  if (!id) {
-    throw new Error(
-      'Announcement ID is missing.'
+        return item;
+      })
     );
-  }
 
-  await request(
-    `/announcements/${encodeURIComponent(id)}`,
-    {
-      method: 'DELETE'
+    return normalizedItem;
+  };
+
+/* =========================================================
+   DELETE ANNOUNCEMENT
+========================================================= */
+
+  const deleteAnnouncement = async (
+    itemOrId
+  ) => {
+    /*
+     * Accept either:
+     *
+     * deleteAnnouncement(item)
+     *
+     * OR
+     *
+     * deleteAnnouncement(item._id)
+     *
+     * OR
+     *
+     * deleteAnnouncement(item.id)
+     */
+
+    const id =
+      typeof itemOrId === 'object'
+        ? getAnnouncementId(itemOrId)
+        : itemOrId
+          ? String(itemOrId)
+          : null;
+
+    console.log(
+      'Deleting announcement:',
+      itemOrId
+    );
+
+    console.log(
+      'Resolved announcement ID:',
+      id
+    );
+
+    /*
+     * NEVER send:
+     *
+     * /announcements/undefined
+     */
+
+    if (!id || id === 'undefined' || id === 'null') {
+      console.error(
+        'Delete cancelled. Invalid announcement ID:',
+        itemOrId
+      );
+
+      throw new Error(
+        'Announcement ID is missing. Cannot delete announcement.'
+      );
     }
-  );
 
-  setAnnouncements((items) =>
-    items.filter(
-      (item) =>
-        String(item._id || item.id) !==
-        String(id)
-    )
-  );
-};
+    /*
+     * DELETE request
+     */
 
-  /* =======================================================
-     CONTEXT VALUE
-  ======================================================= */
-
-  const value =
-    useMemo(
-      () => ({
-        user,
-        teams,
-        announcements,
-
-        login,
-        logout,
-        register,
-
-        postAnnouncement,
-        updateAnnouncement,
-        deleteAnnouncement,
-        deleteTeam
-      }),
-      [
-        user,
-        teams,
-        announcements
-      ]
+    await request(
+      `/announcements/${encodeURIComponent(
+        id
+      )}`,
+      {
+        method: 'DELETE'
+      }
     );
 
-  /* =======================================================
-     PROVIDER
-  ======================================================= */
+    /*
+     * Remove from frontend immediately
+     */
+
+    setAnnouncements((items) =>
+      items.filter((item) => {
+        const currentId =
+          getAnnouncementId(item);
+
+        return (
+          !currentId ||
+          String(currentId) !== String(id)
+        );
+      })
+    );
+
+    console.log(
+      'Announcement deleted successfully:',
+      id
+    );
+  };
+
+/* =========================================================
+   DELETE TEAM
+========================================================= */
+
+  const deleteTeam = async (teamOrId) => {
+    const id = getTeamId(teamOrId);
+
+    console.log(
+      'Deleting team:',
+      teamOrId
+    );
+
+    console.log(
+      'Resolved team ID:',
+      id
+    );
+
+    if (!id || id === 'undefined' || id === 'null') {
+      throw new Error(
+        'Team ID is missing. Cannot delete team.'
+      );
+    }
+
+    await request(
+      `/teams/${encodeURIComponent(
+        String(id)
+      )}`,
+      {
+        method: 'DELETE'
+      }
+    );
+
+    setTeams((items) =>
+      items.filter((team) => {
+        const currentId =
+          getTeamId(team);
+
+        return (
+          !currentId ||
+          String(currentId) !== String(id)
+        );
+      })
+    );
+
+    console.log(
+      'Team deleted successfully:',
+      id
+    );
+  };
+
+/* =========================================================
+   CONTEXT VALUE
+========================================================= */
+
+  const value = useMemo(
+    () => ({
+      user,
+      teams,
+      announcements,
+
+      login,
+      logout,
+      register,
+
+      postAnnouncement,
+      updateAnnouncement,
+      deleteAnnouncement,
+      deleteTeam,
+
+      refresh
+    }),
+    [
+      user,
+      teams,
+      announcements
+    ]
+  );
+
+/* =========================================================
+   PROVIDER
+========================================================= */
 
   return (
-    <AuthContext.Provider
-      value={value}
-    >
+    <AuthContext.Provider value={value}>
       {children}
     </AuthContext.Provider>
   );
 }
 
 /* =========================================================
-   USE AUTH HOOK
+   USE AUTH
 ========================================================= */
 
 export function useAuth() {
-  return useContext(
-    AuthContext
-  );
+  return useContext(AuthContext);
 }
