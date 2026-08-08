@@ -1,4 +1,3 @@
-
 import { useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 
@@ -15,16 +14,26 @@ export default function Admin() {
 
   const [text, setText] = useState('');
   const [attachment, setAttachment] = useState(null);
+
   const [editingId, setEditingId] = useState(null);
   const [editText, setEditText] = useState('');
   const [editAttachment, setEditAttachment] = useState(null);
+
   const [status, setStatus] = useState('active');
+
+  /* =========================================================
+     ACCESS CONTROL
+  ========================================================= */
 
   if (!user || user.role !== 'admin') {
     return (
       <main className="page">
-        <section className="glass" style={{ padding: '2rem' }}>
+        <section
+          className="glass"
+          style={{ padding: '2rem' }}
+        >
           <h2>Access Denied</h2>
+
           <p className="meta-text">
             Administrator access is required.
           </p>
@@ -32,6 +41,10 @@ export default function Admin() {
       </main>
     );
   }
+
+  /* =========================================================
+     FILE ATTACHMENT
+  ========================================================= */
 
   const handleAttachment = (event) => {
     const file = event.target.files?.[0];
@@ -54,11 +67,14 @@ export default function Admin() {
     reader.readAsDataURL(file);
   };
 
+  /* =========================================================
+     EDIT FILE ATTACHMENT
+  ========================================================= */
+
   const handleEditAttachment = (event) => {
     const file = event.target.files?.[0];
 
     if (!file) {
-      setEditAttachment(null);
       return;
     }
 
@@ -75,11 +91,18 @@ export default function Admin() {
     reader.readAsDataURL(file);
   };
 
+  /* =========================================================
+     CREATE ANNOUNCEMENT
+  ========================================================= */
+
   const handlePost = async (event) => {
     event.preventDefault();
 
     if (!text.trim() && !attachment) {
-      alert('Please enter announcement text or attach a file.');
+      alert(
+        'Please enter announcement text or attach a file.'
+      );
+
       return;
     }
 
@@ -95,7 +118,9 @@ export default function Admin() {
       setStatus('active');
 
       const fileInput =
-        document.getElementById('announcement-attachment');
+        document.getElementById(
+          'announcement-attachment'
+        );
 
       if (fileInput) {
         fileInput.value = '';
@@ -113,20 +138,59 @@ export default function Admin() {
     }
   };
 
+  /* =========================================================
+     GET ANNOUNCEMENT ID
+     
+     MongoDB normally returns `_id`.
+     The fallback to `id` makes this compatible with
+     normalized frontend data as well.
+  ========================================================= */
+
+  const getAnnouncementId = (item) => {
+    if (!item) {
+      return null;
+    }
+
+    return item._id || item.id || null;
+  };
+
+  /* =========================================================
+     START EDIT
+  ========================================================= */
+
   const startEdit = (item) => {
-    if (!item?._id) {
+    const announcementId =
+      getAnnouncementId(item);
+
+    if (!announcementId) {
       console.error(
-        'Cannot edit announcement: missing _id',
+        'Cannot edit announcement: missing ID',
         item
+      );
+
+      alert(
+        'Unable to edit this announcement because its ID is missing.'
       );
 
       return;
     }
 
-    setEditingId(item._id);
-    setEditText(item.text || '');
-    setEditAttachment(item.attachment || null);
+    setEditingId(
+      String(announcementId)
+    );
+
+    setEditText(
+      item.text || ''
+    );
+
+    setEditAttachment(
+      item.attachment || null
+    );
   };
+
+  /* =========================================================
+     CANCEL EDIT
+  ========================================================= */
 
   const cancelEdit = () => {
     setEditingId(null);
@@ -134,22 +198,37 @@ export default function Admin() {
     setEditAttachment(null);
   };
 
+  /* =========================================================
+     UPDATE ANNOUNCEMENT
+  ========================================================= */
+
   const handleUpdate = async (item) => {
-    if (!item?._id) {
+    const announcementId =
+      getAnnouncementId(item);
+
+    if (!announcementId) {
       console.error(
-        'Cannot update announcement: missing _id',
+        'Cannot update announcement: missing ID',
         item
+      );
+
+      alert(
+        'Unable to update this announcement because its ID is missing.'
       );
 
       return;
     }
 
     try {
-      await updateAnnouncement(item._id, {
-        text: editText.trim(),
-        attachment: editAttachment,
-        status: item.status || 'active'
-      });
+      await updateAnnouncement(
+        announcementId,
+        {
+          text: editText.trim(),
+          attachment: editAttachment,
+          status:
+            item.status || 'active'
+        }
+      );
 
       cancelEdit();
     } catch (error) {
@@ -165,18 +244,37 @@ export default function Admin() {
     }
   };
 
-  const handleDelete = async (item) => {
-    /*
-      IMPORTANT:
-      MongoDB/Mongoose returns `_id`.
-      Do NOT use item.id here.
-    */
+  /* =========================================================
+     DELETE ANNOUNCEMENT
+  ========================================================= */
 
-    const announcementId = item?._id;
+  const handleDelete = async (item) => {
+    const announcementId =
+      getAnnouncementId(item);
+
+    console.log(
+      'Deleting announcement:',
+      {
+        item,
+        announcementId
+      }
+    );
+
+    /*
+     * IMPORTANT:
+     *
+     * Never send an undefined ID.
+     *
+     * Correct:
+     *   /api/announcements/68xxxxxxxx
+     *
+     * Incorrect:
+     *   /api/announcements/undefined
+     */
 
     if (!announcementId) {
       console.error(
-        'Cannot delete announcement: missing _id',
+        'Cannot delete announcement: missing ID',
         item
       );
 
@@ -187,9 +285,10 @@ export default function Admin() {
       return;
     }
 
-    const confirmed = window.confirm(
-      'Are you sure you want to delete this announcement?'
-    );
+    const confirmed =
+      window.confirm(
+        'Are you sure you want to delete this announcement?'
+      );
 
     if (!confirmed) {
       return;
@@ -212,26 +311,39 @@ export default function Admin() {
     }
   };
 
-  const handleDeleteTeam = async (team) => {
+  /* =========================================================
+     DELETE TEAM
+  ========================================================= */
+
+  const handleDeleteTeam = async (
+    team
+  ) => {
     if (!team?.teamId) {
       console.error(
         'Cannot delete team: missing teamId',
         team
       );
 
+      alert(
+        'Unable to delete this team because its Team ID is missing.'
+      );
+
       return;
     }
 
-    const confirmed = window.confirm(
-      `Are you sure you want to delete the registration for "${team.teamName}"?`
-    );
+    const confirmed =
+      window.confirm(
+        `Are you sure you want to delete the registration for "${team.teamName}"?`
+      );
 
     if (!confirmed) {
       return;
     }
 
     try {
-      await deleteTeam(team.teamId);
+      await deleteTeam(
+        team.teamId
+      );
     } catch (error) {
       console.error(
         'Failed to delete team:',
@@ -244,6 +356,10 @@ export default function Admin() {
       );
     }
   };
+
+  /* =========================================================
+     EXPORT CSV
+  ========================================================= */
 
   const exportCsv = () => {
     const rows = [
@@ -263,21 +379,25 @@ export default function Admin() {
     ];
 
     teams.forEach((team) => {
-      team.members?.forEach((member) => {
-        rows.push([
-          team.teamId || '',
-          team.teamName || '',
-          team.college || '',
-          team.status || '',
-          member.name || '',
-          member.email || '',
-          member.phone || '',
-          member.gender || '',
-          member.section || '',
-          member.laptop || '',
-          member.isTeamHead ? 'Yes' : 'No'
-        ]);
-      });
+      team.members?.forEach(
+        (member) => {
+          rows.push([
+            team.teamId || '',
+            team.teamName || '',
+            team.college || '',
+            team.status || '',
+            member.name || '',
+            member.email || '',
+            member.phone || '',
+            member.gender || '',
+            member.section || '',
+            member.laptop || '',
+            member.isTeamHead
+              ? 'Yes'
+              : 'No'
+          ]);
+        }
+      );
     });
 
     const csv = rows
@@ -299,7 +419,8 @@ export default function Admin() {
     const blob = new Blob(
       [csv],
       {
-        type: 'text/csv;charset=utf-8;'
+        type:
+          'text/csv;charset=utf-8;'
       }
     );
 
@@ -310,18 +431,30 @@ export default function Admin() {
       document.createElement('a');
 
     link.href = url;
+
     link.download =
       'hackathon-team-registrations.csv';
 
     document.body.appendChild(link);
+
     link.click();
+
     link.remove();
 
     URL.revokeObjectURL(url);
   };
 
+  /* =========================================================
+     RENDER
+  ========================================================= */
+
   return (
     <main className="page">
+
+      {/* =====================================================
+          HEADER
+      ===================================================== */}
+
       <section
         className="glass"
         style={{
@@ -329,17 +462,19 @@ export default function Admin() {
           marginBottom: '2rem'
         }}
       >
-        <h1>Admin Dashboard</h1>
+        <h1>
+          Admin Dashboard
+        </h1>
 
         <p className="meta-text">
-          Manage announcements and registered
-          hackathon teams.
+          Manage announcements and
+          registered hackathon teams.
         </p>
       </section>
 
       {/* =====================================================
           CREATE ANNOUNCEMENT
-      ====================================================== */}
+      ===================================================== */}
 
       <section
         className="glass"
@@ -347,19 +482,26 @@ export default function Admin() {
           padding: '1.5rem'
         }}
       >
-        <h2>Create Announcement</h2>
+        <h2>
+          Create Announcement
+        </h2>
 
-        <form onSubmit={handlePost}>
+        <form
+          onSubmit={handlePost}
+        >
           <div
             style={{
               display: 'grid',
               gap: '1rem'
             }}
           >
+
             <textarea
               value={text}
               onChange={(event) =>
-                setText(event.target.value)
+                setText(
+                  event.target.value
+                )
               }
               placeholder="Enter announcement..."
               rows={5}
@@ -372,7 +514,9 @@ export default function Admin() {
             <select
               value={status}
               onChange={(event) =>
-                setStatus(event.target.value)
+                setStatus(
+                  event.target.value
+                )
               }
             >
               <option value="active">
@@ -387,12 +531,15 @@ export default function Admin() {
             <input
               id="announcement-attachment"
               type="file"
-              onChange={handleAttachment}
+              onChange={
+                handleAttachment
+              }
             />
 
             {attachment && (
               <p className="meta-text">
-                Attached: {attachment.name}
+                Attached:{' '}
+                {attachment.name}
               </p>
             )}
 
@@ -402,20 +549,23 @@ export default function Admin() {
             >
               Post Announcement
             </button>
+
           </div>
         </form>
       </section>
 
       {/* =====================================================
           ANNOUNCEMENTS
-      ====================================================== */}
+      ===================================================== */}
 
       <section
         style={{
           marginTop: '2rem'
         }}
       >
-        <h2>Announcements</h2>
+        <h2>
+          Announcements
+        </h2>
 
         {announcements.length === 0 ? (
           <p className="meta-text">
@@ -428,174 +578,247 @@ export default function Admin() {
               gap: '1rem'
             }}
           >
-            {announcements.map((item) => (
-              <div
-                key={item._id}
-                className="glass"
-                style={{
-                  padding: '1rem'
-                }}
-              >
-                {editingId === item._id ? (
-                  <>
-                    <textarea
-                      value={editText}
-                      onChange={(event) =>
-                        setEditText(
-                          event.target.value
-                        )
-                      }
-                      rows={4}
-                      style={{
-                        width: '100%',
-                        marginBottom: '1rem'
-                      }}
-                    />
 
-                    <input
-                      type="file"
-                      onChange={
-                        handleEditAttachment
-                      }
-                    />
+            {announcements.map(
+              (item) => {
 
-                    {editAttachment && (
-                      <p className="meta-text">
-                        Attachment:{' '}
-                        {editAttachment.name}
-                      </p>
-                    )}
+                const announcementId =
+                  getAnnouncementId(
+                    item
+                  );
 
-                    <div
-                      style={{
-                        display: 'flex',
-                        gap: '0.5rem',
-                        marginTop: '1rem'
-                      }}
-                    >
-                      <button
-                        type="button"
-                        className="primary-btn"
-                        onClick={() =>
-                          handleUpdate(item)
-                        }
-                      >
-                        Save
-                      </button>
+                return (
+                  <div
+                    key={
+                      announcementId ||
+                      `announcement-${Math.random()}`
+                    }
+                    className="glass"
+                    style={{
+                      padding: '1rem'
+                    }}
+                  >
 
-                      <button
-                        type="button"
-                        className="secondary-btn"
-                        onClick={cancelEdit}
-                      >
-                        Cancel
-                      </button>
-                    </div>
-                  </>
-                ) : (
-                  <>
-                    <p
-                      style={{
-                        margin: 0,
-                        fontWeight: 700
-                      }}
-                    >
-                      {item.text ||
-                        'Attachment'}
-                    </p>
+                    {/* =================================================
+                        EDIT MODE
+                    ================================================== */}
 
-                    {item.attachment && (
-                      <p>
-                        <a
-                          href={
-                            item.attachment.data
+                    {editingId ===
+                    String(
+                      announcementId
+                    ) ? (
+                      <>
+                        <textarea
+                          value={
+                            editText
                           }
-                          download={
-                            item.attachment.name
+                          onChange={(
+                            event
+                          ) =>
+                            setEditText(
+                              event.target
+                                .value
+                            )
                           }
-                          target="_blank"
-                          rel="noreferrer"
+                          rows={4}
+                          style={{
+                            width:
+                              '100%',
+                            marginBottom:
+                              '1rem'
+                          }}
+                        />
+
+                        <input
+                          type="file"
+                          onChange={
+                            handleEditAttachment
+                          }
+                        />
+
+                        {editAttachment && (
+                          <p className="meta-text">
+                            Attachment:{' '}
+                            {
+                              editAttachment.name
+                            }
+                          </p>
+                        )}
+
+                        <div
+                          style={{
+                            display:
+                              'flex',
+                            gap:
+                              '0.5rem',
+                            marginTop:
+                              '1rem'
+                          }}
                         >
-                          View{' '}
-                          {
-                            item.attachment.name
-                          }
-                        </a>
-                      </p>
+
+                          <button
+                            type="button"
+                            className="primary-btn"
+                            onClick={() =>
+                              handleUpdate(
+                                item
+                              )
+                            }
+                          >
+                            Save
+                          </button>
+
+                          <button
+                            type="button"
+                            className="secondary-btn"
+                            onClick={
+                              cancelEdit
+                            }
+                          >
+                            Cancel
+                          </button>
+
+                        </div>
+                      </>
+                    ) : (
+
+                      /* =================================================
+                          DISPLAY MODE
+                      ================================================== */
+
+                      <>
+                        <p
+                          style={{
+                            margin: 0,
+                            fontWeight: 700
+                          }}
+                        >
+                          {item.text ||
+                            'Attachment'}
+                        </p>
+
+                        {item.attachment && (
+                          <p>
+                            <a
+                              href={
+                                item
+                                  .attachment
+                                  .data
+                              }
+                              download={
+                                item
+                                  .attachment
+                                  .name
+                              }
+                              target="_blank"
+                              rel="noreferrer"
+                            >
+                              View{' '}
+                              {
+                                item
+                                  .attachment
+                                  .name
+                              }
+                            </a>
+                          </p>
+                        )}
+
+                        <p className="meta-text">
+                          Posted by{' '}
+                          {item.author ||
+                            'Administrator'}{' '}
+                          on{' '}
+                          {item.date
+                            ? new Date(
+                                item.date
+                              ).toLocaleString()
+                            : 'Unknown date'}
+                        </p>
+
+                        <p className="meta-text">
+                          Status:{' '}
+                          {item.status ||
+                            'active'}
+                        </p>
+
+                        <p className="meta-text">
+                          ID:{' '}
+                          {announcementId ||
+                            'MISSING ID'}
+                        </p>
+
+                        <div
+                          style={{
+                            display:
+                              'flex',
+                            gap:
+                              '0.5rem'
+                          }}
+                        >
+
+                          <button
+                            type="button"
+                            className="secondary-btn"
+                            onClick={() =>
+                              startEdit(
+                                item
+                              )
+                            }
+                            disabled={
+                              item.status ===
+                              'postponed' ||
+                              !announcementId
+                            }
+                          >
+                            Edit
+                          </button>
+
+                          <button
+                            type="button"
+                            className="secondary-btn"
+                            onClick={() =>
+                              handleDelete(
+                                item
+                              )
+                            }
+                            disabled={
+                              item.status ===
+                                'postponed' ||
+                              !announcementId
+                            }
+                          >
+                            Delete
+                          </button>
+
+                        </div>
+                      </>
                     )}
 
-                    <p className="meta-text">
-                      Posted by{' '}
-                      {item.author ||
-                        'Administrator'}{' '}
-                      on{' '}
-                      {item.date
-                        ? new Date(
-                            item.date
-                          ).toLocaleString()
-                        : 'Unknown date'}
-                    </p>
+                  </div>
+                );
+              }
+            )}
 
-                    <p className="meta-text">
-                      Status:{' '}
-                      {item.status ||
-                        'active'}
-                    </p>
-
-                    <div
-                      style={{
-                        display: 'flex',
-                        gap: '0.5rem'
-                      }}
-                    >
-                      <button
-                        type="button"
-                        className="secondary-btn"
-                        onClick={() =>
-                          startEdit(item)
-                        }
-                        disabled={
-                          item.status ===
-                          'postponed'
-                        }
-                      >
-                        Edit
-                      </button>
-
-                      <button
-                        type="button"
-                        className="secondary-btn"
-                        onClick={() =>
-                          handleDelete(item)
-                        }
-                        disabled={
-                          item.status ===
-                          'postponed'
-                        }
-                      >
-                        Delete
-                      </button>
-                    </div>
-                  </>
-                )}
-              </div>
-            ))}
           </div>
         )}
       </section>
 
       {/* =====================================================
           REGISTERED TEAMS
-      ====================================================== */}
+      ===================================================== */}
 
       <section
         style={{
           marginTop: '2rem'
         }}
       >
+
         <div className="section-title">
+
           <h2>
-            Registered Teams ({teams.length})
+            Registered Teams (
+            {teams.length}
+            )
           </h2>
 
           <button
@@ -605,6 +828,7 @@ export default function Admin() {
           >
             Download Excel-compatible CSV
           </button>
+
         </div>
 
         {teams.length === 0 ? (
@@ -612,13 +836,16 @@ export default function Admin() {
             No teams registered yet.
           </p>
         ) : (
+
           <div
             style={{
               display: 'grid',
               gap: '1rem'
             }}
           >
+
             {teams.map((team) => (
+
               <div
                 key={team.teamId}
                 className="glass"
@@ -626,12 +853,14 @@ export default function Admin() {
                   padding: '1rem'
                 }}
               >
+
                 <h3
                   style={{
                     marginTop: 0
                   }}
                 >
                   {team.teamName}{' '}
+
                   <span className="meta-text">
                     ({team.teamId})
                   </span>
@@ -678,11 +907,15 @@ export default function Admin() {
                 >
                   Delete Registration
                 </button>
+
               </div>
+
             ))}
+
           </div>
         )}
       </section>
+
     </main>
   );
 }
